@@ -56,13 +56,16 @@ def open_image_folder(source_dir, *, max_images: Optional[int]):
     labels = {}
     meta_fname = os.path.join(source_dir, 'dataset.json')
     if os.path.isfile(meta_fname):
+        
         with open(meta_fname, 'r') as file:
             labels = json.load(file)['labels']
             if labels is not None:
                 labels = { x[0]: x[1] for x in labels }
             else:
                 labels = {}
-
+            
+    
+        
     max_idx = maybe_min(len(input_images), max_images)
 
     def iterate_images():
@@ -430,6 +433,7 @@ def convert_dataset(
         image_bits = io.BytesIO()
         img.save(image_bits, format='png', compress_level=0, optimize=False)
         save_bytes(os.path.join(archive_root_dir, archive_fname), image_bits.getbuffer())
+
         labels.append([archive_fname, image['label']] if image['label'] is not None else None)
 
     metadata = {

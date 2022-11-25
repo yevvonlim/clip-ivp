@@ -1,2 +1,8 @@
 __pycache__/
 .cache/
+out/
+data/
+*checkpoints*/
+testout/
+class-conditional/
+intraoral.zip
