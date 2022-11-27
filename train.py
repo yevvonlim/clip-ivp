@@ -17,10 +17,15 @@ import tempfile
 import torch
 import dnnlib
 
+
+
 from training import training_loop
 from metrics import metric_main
 from torch_utils import training_stats
 from torch_utils import custom_ops
+
+ENCODERS = ['RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64',
+            'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
 
 #----------------------------------------------------------------------------
 
@@ -36,11 +41,16 @@ def setup_training_loop_kwargs(
     metrics    = None, # List of metric names: [], ['fid50k_full'] (default), ...
     seed       = None, # Random seed: <int>, default = 0
 
+
     # Dataset.
     data       = None, # Training dataset (required): <path>
+    condition  = None, # Conditional Image path
     cond       = None, # Train conditional model based on dataset labels: <bool>, default = False
     subset     = None, # Train with only N images: <int>, default = all
     mirror     = None, # Augment dataset with x-flips: <bool>, default = False
+
+    # Image encoder
+    encoder    = None, # Image encoder name: <str>, default = 'ViT-B/32'. Valid when cond is not None.
 
     # Base config.
     cfg        = None, # Base config: 'auto' (default), 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar'
@@ -104,7 +114,17 @@ def setup_training_loop_kwargs(
 
     assert data is not None
     assert isinstance(data, str)
-    args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
+    if condition == None:
+        args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
+        img_dim = 0
+        args.image_encoder_kwargs = dnnlib.EasyDict()
+    else:
+        args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageConditionalDataset', pair_path=data, condition_path=condition, use_labels=True, max_size=None, xflip=False)
+        if encoder is None:
+            encoder = 'ViT-B/32'
+        assert encoder in ENCODERS
+        img_dim = 512 
+        args.image_encoder_kwargs = dnnlib.EasyDict(name=encoder)
     args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     try:
         training_set = dnnlib.util.construct_class_by_name(**args.training_set_kwargs) # subclass of training.dataset.Dataset
@@ -172,9 +192,9 @@ def setup_training_loop_kwargs(
         spec.lrate = 0.002 if res >= 1024 else 0.0025
         spec.gamma = 0.0002 * (res ** 2) / spec.mb # heuristic formula
         spec.ema = spec.mb * 10 / 32
-
-    args.G_kwargs = dnnlib.EasyDict(class_name='training.networks.Generator', z_dim=512, w_dim=512, mapping_kwargs=dnnlib.EasyDict(), synthesis_kwargs=dnnlib.EasyDict())
-    args.D_kwargs = dnnlib.EasyDict(class_name='training.networks.Discriminator', block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
+    
+    args.G_kwargs = dnnlib.EasyDict(class_name='training.networks.Generator', z_dim=512, w_dim=512, mapping_kwargs=dnnlib.EasyDict(img_dim=img_dim), synthesis_kwargs=dnnlib.EasyDict())
+    args.D_kwargs = dnnlib.EasyDict(class_name='training.networks.Discriminator', block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(img_dim=img_dim), epilogue_kwargs=dnnlib.EasyDict())
     args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = int(spec.fmaps * 32768)
     args.G_kwargs.synthesis_kwargs.channel_max = args.D_kwargs.channel_max = 512
     args.G_kwargs.mapping_kwargs.num_layers = spec.map
@@ -409,6 +429,7 @@ class CommaSeparatedList(click.ParamType):
 # Dataset.
 @click.option('--data', help='Training data (directory or zip)', metavar='PATH', required=True)
 @click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
+@click.option('--condition', help='Conditional image path', metavar='PATH', required=True)
 @click.option('--subset', help='Train with only N images [default: all]', type=int, metavar='INT')
 @click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
 
@@ -503,7 +524,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     print(json.dumps(args, indent=2))
     print()
     print(f'Output directory:   {args.run_dir}')
-    print(f'Training data:      {args.training_set_kwargs.path}')
+    print(f'Training data:      {args.training_set_kwargs.pair_path}')
     print(f'Training duration:  {args.total_kimg} kimg')
     print(f'Number of GPUs:     {args.num_gpus}')
     print(f'Number of images:   {args.training_set_kwargs.max_size}')

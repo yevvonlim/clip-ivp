@@ -13,6 +13,7 @@ import PIL.Image
 import json
 import torch
 import dnnlib
+import glob
 
 try:
     import pyspng
@@ -234,3 +235,133 @@ class ImageFolderDataset(Dataset):
         return labels
 
 #----------------------------------------------------------------------------
+
+class ImageConditionalDataset(Dataset):
+    def __init__(self,
+        condition_path,
+        pair_path,
+        resolution=None,
+        **super_kwargs,
+    ):
+        # super().__init__(name, raw_shape, max_size, use_labels, xflip, random_seed)
+        self._condition_path = condition_path
+        self._pair_path = pair_path
+        self._type ='dir'
+
+        assert os.path.isdir(self._condition_path)
+        PIL.Image.init()
+        self._image_fnames = []
+        if os.path.isdir(self._pair_path):
+            self._all_fnames = [os.path.relpath(os.path.join(root, file), start=self._pair_path) for root, dirs, files in os.walk(self._pair_path) for file in files]
+            self._image_fnames = sorted([fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION])
+        
+        if len(self._image_fnames) == 0:
+            raise IOError(f'No image files found in the specified path: {self._pair_path}')
+        
+        self._img_pair_dict = {fname: os.path.join(self._condition_path, 'front', os.path.split(fname)[-1]) for fname in self._image_fnames}
+        for key in self._img_pair_dict:
+            if not os.path.isfile(self._img_pair_dict[key]):
+                raise IOError(f'No corresponding conditional image!{self._img_pair_dict[key]}')
+        
+        
+        name = os.path.splitext(os.path.basename(self._pair_path))[0]
+        raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
+        self._cond_shape = [len(list(set(val for val in self._img_pair_dict.values())))] + list(self._load_conditional_image(0).shape)
+        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+            raise IOError('Image files do not match the specified resolution')
+        super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+
+    @property
+    def condimg_shape(self):
+        return list(self._cond_shape[1:])
+
+    def __getitem__(self, idx):
+        image = self._load_raw_image(self._raw_idx[idx])
+        cond_img = self._load_conditional_image(self._raw_idx[idx])
+
+        assert isinstance(image, np.ndarray)
+        assert isinstance(cond_img, np.ndarray)
+        assert list(image.shape) == self.image_shape
+        assert list(cond_img.shape) == self.condimg_shape
+        assert image.dtype == np.uint8
+        assert cond_img.dtype == np.uint8
+
+        if self._xflip[idx]:
+            assert image.ndim == 3 # CHW
+            image = image[:, :, ::-1]
+        return image.copy(), self.get_label(idx), cond_img.copy()
+
+    @staticmethod
+    def _file_ext(fname):
+        return os.path.splitext(fname)[1].lower()
+
+    def _open_file(self, fname):
+        if self._type == 'dir':
+            return open(os.path.join(self._pair_path, fname), 'rb')
+        if self._type == 'zip':
+            # return self._get_zipfile().open(fname, 'r')
+            raise NotImplementedError
+        return None
+
+    def close(self):
+        try:
+            if self._zipfile is not None:
+                self._zipfile.close()
+        finally:
+            self._zipfile = None
+
+    def __getstate__(self):
+        return dict(super().__getstate__(), _zipfile=None)
+
+    def _load_raw_image(self, raw_idx):
+        fname = self._image_fnames[raw_idx]
+        with self._open_file(fname) as f:
+            if pyspng is not None and self._file_ext(fname) == '.png':
+                image = pyspng.load(f.read())
+            else:
+                image = np.array(PIL.Image.open(f))
+        if image.ndim == 2:
+            image = image[:, :, np.newaxis] # HW => HWC
+        image = image.transpose(2, 0, 1) # HWC => CHW
+        return image
+
+    def _load_conditional_image(self, raw_idx):
+        fname = self._image_fnames[raw_idx]
+        cond_name = self._img_pair_dict[fname]
+        with self._open_file(cond_name) as f:
+            if pyspng is not None and self._file_ext(cond_name) == '.png':
+                image = pyspng.load(f.read())
+            else:
+                image = np.array(PIL.Image.open(f))
+        if image.ndim == 2:
+            image = image[:, :, np.newaxis]
+        image = image.transpose(2, 0, 1)
+        return image
+
+    def get_cond_image(self, idx):
+        return self._load_conditional_image(idx)
+
+    def _load_raw_labels(self):
+        fname = 'dataset.json'
+        if fname not in self._all_fnames:
+            print('no dataset.json')
+            return None
+        with self._open_file(fname) as f:
+            labels = json.load(f)['labels']
+        if labels is None:
+            return None
+        labels = dict(labels)
+        labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
+        labels = np.array(labels)
+        labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+        return labels
+
+    def _get_pair_class(self, pair_path:str):
+        return os.path.dirname(os.path.relpath(pair_path, self._pair_path))
+    
+    def get_details(self, idx):
+        d = dnnlib.EasyDict()
+        d.raw_idx = int(self._raw_idx[idx])
+        d.xflip = (int(self._xflip[idx]) != 0)
+        d.raw_label = self._get_raw_labels()[d.raw_idx].copy()
+        return d

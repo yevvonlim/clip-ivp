@@ -15,21 +15,25 @@ import psutil
 import PIL.Image
 import numpy as np
 import torch
+import clip
 import dnnlib
 from torch_utils import misc
 from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
-
+from PIL import Image
 import legacy
 from metrics import metric_main
+from torchvision.transforms.functional import to_pil_image
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+from torchvision.transforms import InterpolationMode
+BICUBIC = InterpolationMode.BICUBIC
 
 #----------------------------------------------------------------------------
 
 def setup_snapshot_image_grid(training_set, random_seed=0):
     rnd = np.random.RandomState(random_seed)
-    gw = np.clip(7680 // training_set.image_shape[2], 7, 32)
-    gh = np.clip(4320 // training_set.image_shape[1], 4, 32)
+    
 
     # No labels => show random subset of training samples.
     if not training_set.has_labels:
@@ -50,18 +54,21 @@ def setup_snapshot_image_grid(training_set, random_seed=0):
         label_order = sorted(label_groups.keys())
         for label in label_order:
             rnd.shuffle(label_groups[label])
-
+        sample_num = 5
+        gw =  sample_num
+        gh = len(label_order)
         # Organize into grid.
         grid_indices = []
         for y in range(gh):
             label = label_order[y % len(label_order)]
             indices = label_groups[label]
-            grid_indices += [indices[x % len(indices)] for x in range(gw)]
+            grid_indices += [indices[x % len(indices)] for x in range(sample_num)]
             label_groups[label] = [indices[(i + gw) % len(indices)] for i in range(len(indices))]
 
     # Load data.
-    images, labels = zip(*[training_set[i] for i in grid_indices])
-    return (gw, gh), np.stack(images), np.stack(labels)
+    images, labels, cond_imgs = zip(*[training_set[i] for i in grid_indices])
+    
+    return (gw, gh), np.stack(images), np.stack(labels), np.stack(cond_imgs)
 
 #----------------------------------------------------------------------------
 
@@ -93,6 +100,9 @@ def training_loop(
     D_kwargs                = {},       # Options for discriminator network.
     G_opt_kwargs            = {},       # Options for generator optimizer.
     D_opt_kwargs            = {},       # Options for discriminator optimizer.
+
+    image_encoder_kwargs    = {},       # Options for image encoder.
+
     augment_kwargs          = None,     # Options for augmentation pipeline. None = disable.
     loss_kwargs             = {},       # Options for loss function.
     metrics                 = [],       # Metrics to evaluate during training.
@@ -122,6 +132,12 @@ def training_loop(
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
+    encoder, _ = clip.load(**image_encoder_kwargs, device=device)
+    preprocess = Compose([
+        Resize(224, interpolation=BICUBIC),
+        ToTensor(),
+        Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+    ])
     np.random.seed(random_seed * num_gpus + rank)
     torch.manual_seed(random_seed * num_gpus + rank)
     torch.backends.cudnn.benchmark = cudnn_benchmark    # Improves training speed.
@@ -163,8 +179,9 @@ def training_loop(
     if rank == 0:
         z = torch.empty([batch_gpu, G.z_dim], device=device)
         c = torch.empty([batch_gpu, G.c_dim], device=device)
-        img = misc.print_module_summary(G, [z, c])
-        misc.print_module_summary(D, [img, c])
+        img_c = torch.empty([batch_gpu, G.mapping.img_dim], device=device) if G.mapping.img_dim != 0 else None
+        img = misc.print_module_summary(G, [z, c, img_c])
+        misc.print_module_summary(D, [img, c, img_c])
 
     # Setup augmentation.
     if rank == 0:
@@ -219,11 +236,20 @@ def training_loop(
     grid_c = None
     if rank == 0:
         print('Exporting sample images...')
-        grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set)
+        grid_size, images, labels, cond_imgs = setup_snapshot_image_grid(training_set=training_set)
+        images = np.concatenate([cond_imgs, images], axis=-1)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
-        images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        grid_cond_imgs = [Image.fromarray(training_set.get_cond_image(np.random.randint(len(training_set))).transpose(1, 2, 0) ) for _ in range(labels.shape[0])]
+        with torch.no_grad():
+            grid_emb = torch.cat([encoder.encode_image(preprocess(img).unsqueeze(0).to(device)) for img in grid_cond_imgs], axis=0).split(batch_gpu)
+        grid_cond_imgs = np.concatenate([np.array(img).transpose(2, 0, 1)[np.newaxis, ...] for img in grid_cond_imgs], axis=0)
+        grid_cond_imgs = (grid_cond_imgs - 127.5)/127.5
+       
+        shape_ = training_set.get_cond_image(0).shape
+        images = torch.cat([G_ema(z=z, c=c, img_emb=emb, noise_mode='const').cpu().squeeze() for z, c, emb in zip(grid_z, grid_c, grid_emb)]).numpy().reshape(-1, *shape_)
+        images = np.concatenate([grid_cond_imgs, images], axis=-1)
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
 
     # Initialize logs.
@@ -257,7 +283,13 @@ def training_loop(
 
         # Fetch training data.
         with torch.autograd.profiler.record_function('data_fetch'):
-            phase_real_img, phase_real_c = next(training_set_iterator)
+            if training_set_kwargs.class_name == 'training.dataset.ImageConditionalDataset':
+                phase_real_img, phase_real_c, phase_real_imgemb = next(training_set_iterator)
+                real_imgs = torch.cat([preprocess(to_pil_image(t_img.squeeze())).unsqueeze(0).to(device) for t_img in torch.chunk(phase_real_imgemb, phase_real_imgemb.shape[0], axis=0)], axis=0)
+                with torch.no_grad():
+                    phase_real_imgemb = encoder.encode_image(real_imgs).split(batch_gpu)
+            else:
+                phase_real_img, phase_real_c = next(training_set_iterator)
             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
             phase_real_c = phase_real_c.to(device).split(batch_gpu)
             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
@@ -265,9 +297,15 @@ def training_loop(
             all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
+            
+            all_gen_imgemb = [Image.fromarray(training_set.get_cond_image(np.random.randint(len(training_set))).transpose(1, 2, 0) ) for _ in range(len(phases) * batch_size)]
+            with torch.no_grad():
+                all_gen_imgemb = encoder.encode_image(torch.cat([preprocess(img).unsqueeze(0).to(device) for img in all_gen_imgemb], axis=0))
+            all_gen_imgemb = [phase_gen_imgemb.split(batch_gpu) for phase_gen_imgemb in all_gen_imgemb.split(batch_size)]
+            
 
         # Execute training phases.
-        for phase, phase_gen_z, phase_gen_c in zip(phases, all_gen_z, all_gen_c):
+        for phase, phase_gen_z, phase_gen_c, phase_gen_imgemb in zip(phases, all_gen_z, all_gen_c, all_gen_imgemb):
             if batch_idx % phase.interval != 0:
                 continue
 
@@ -278,10 +316,10 @@ def training_loop(
             phase.module.requires_grad_(True)
 
             # Accumulate gradients over multiple rounds.
-            for round_idx, (real_img, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_c, phase_gen_z, phase_gen_c)):
+            for round_idx, (real_img, real_c, real_emb, gen_z, gen_c, gen_emb) in enumerate(zip(phase_real_img, phase_real_c, phase_real_imgemb, phase_gen_z, phase_gen_c, phase_gen_imgemb)):
                 sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
                 gain = phase.interval
-                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
+                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, real_emb=real_emb, gen_z=gen_z, gen_c=gen_c, gen_emb=gen_emb, sync=sync, gain=gain)
 
             # Update weights.
             phase.module.requires_grad_(False)
@@ -346,7 +384,8 @@ def training_loop(
 
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-            images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+            images = torch.cat([G_ema(z=z, c=c, img_emb=emb, noise_mode='const').cpu() for z, c, emb in zip(grid_z, grid_c, grid_emb)]).numpy()
+            images = np.concatenate([grid_cond_imgs, images], axis=-1)
             save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
         # Save network snapshot.
@@ -372,7 +411,7 @@ def training_loop(
                 print('Evaluating metrics...')
             for metric in metrics:
                 result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
-                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
+                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device, encoder=encoder, preprocess=preprocess)
                 if rank == 0:
                     metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
                 stats_metrics.update(result_dict.results)
