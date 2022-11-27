@@ -135,7 +135,6 @@ def training_loop(
     encoder, _ = clip.load(**image_encoder_kwargs, device=device)
     preprocess = Compose([
         Resize(224, interpolation=BICUBIC),
-        ToTensor(),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
     np.random.seed(random_seed * num_gpus + rank)
@@ -241,15 +240,16 @@ def training_loop(
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
-        grid_cond_imgs = [Image.fromarray(training_set.get_cond_image(np.random.randint(len(training_set))).transpose(1, 2, 0) ) for _ in range(labels.shape[0])]
+        
+        
         with torch.no_grad():
-            grid_emb = torch.cat([encoder.encode_image(preprocess(img).unsqueeze(0).to(device)) for img in grid_cond_imgs], axis=0).split(batch_gpu)
-        grid_cond_imgs = np.concatenate([np.array(img).transpose(2, 0, 1)[np.newaxis, ...] for img in grid_cond_imgs], axis=0)
-        grid_cond_imgs = (grid_cond_imgs - 127.5)/127.5
+            grid_emb = encoder.encode_image(preprocess(torch.from_numpy(cond_imgs).to(device, dtype=torch.float32))).split(batch_gpu)
+        # grid_cond_imgs = np.concatenate([np.array(img).transpose(2, 0, 1)[np.newaxis, ...] for img in grid_cond_imgs], axis=0)
+        fake_cond_imgs = (cond_imgs - 127.5)/127.5
        
         shape_ = training_set.get_cond_image(0).shape
         images = torch.cat([G_ema(z=z, c=c, img_emb=emb, noise_mode='const').cpu().squeeze() for z, c, emb in zip(grid_z, grid_c, grid_emb)]).numpy().reshape(-1, *shape_)
-        images = np.concatenate([grid_cond_imgs, images], axis=-1)
+        images = np.concatenate([fake_cond_imgs, images], axis=-1)
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
 
     # Initialize logs.
@@ -285,9 +285,9 @@ def training_loop(
         with torch.autograd.profiler.record_function('data_fetch'):
             if training_set_kwargs.class_name == 'training.dataset.ImageConditionalDataset':
                 phase_real_img, phase_real_c, phase_real_imgemb = next(training_set_iterator)
-                real_imgs = torch.cat([preprocess(to_pil_image(t_img.squeeze())).unsqueeze(0).to(device) for t_img in torch.chunk(phase_real_imgemb, phase_real_imgemb.shape[0], axis=0)], axis=0)
+                # real_imgs = torch.cat([preprocess(to_pil_image(t_img.squeeze())).unsqueeze(0).to(device) for t_img in torch.chunk(phase_real_imgemb, phase_real_imgemb.shape[0], axis=0)], axis=0)
                 with torch.no_grad():
-                    phase_real_imgemb = encoder.encode_image(real_imgs).split(batch_gpu)
+                    phase_real_imgemb = encoder.encode_image(preprocess(phase_real_imgemb.to(device, dtype=torch.float32))).split(batch_gpu)
             else:
                 phase_real_img, phase_real_c = next(training_set_iterator)
             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
@@ -297,10 +297,12 @@ def training_loop(
             all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
+            all_gen_imgemb = [training_set.get_cond_image(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
+            all_gen_imgemb = preprocess(torch.from_numpy(np.stack(all_gen_imgemb)).pin_memory().to(device, dtype=torch.float32))
             
-            all_gen_imgemb = [Image.fromarray(training_set.get_cond_image(np.random.randint(len(training_set))).transpose(1, 2, 0) ) for _ in range(len(phases) * batch_size)]
+            # all_gen_imgemb = [Image.fromarray(training_set.get_cond_image(np.random.randint(len(training_set))).transpose(1, 2, 0) ) for _ in range(len(phases) * batch_size)]
             with torch.no_grad():
-                all_gen_imgemb = encoder.encode_image(torch.cat([preprocess(img).unsqueeze(0).to(device) for img in all_gen_imgemb], axis=0))
+                all_gen_imgemb = encoder.encode_image(all_gen_imgemb)
             all_gen_imgemb = [phase_gen_imgemb.split(batch_gpu) for phase_gen_imgemb in all_gen_imgemb.split(batch_size)]
             
 
@@ -385,7 +387,7 @@ def training_loop(
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
             images = torch.cat([G_ema(z=z, c=c, img_emb=emb, noise_mode='const').cpu() for z, c, emb in zip(grid_z, grid_c, grid_emb)]).numpy()
-            images = np.concatenate([grid_cond_imgs, images], axis=-1)
+            images = np.concatenate([fake_cond_imgs, images], axis=-1)
             save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
         # Save network snapshot.

@@ -270,9 +270,10 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
             c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
 
-            imgemb = [Image.fromarray(dataset.get_cond_image(np.random.randint(len(dataset))).transpose(1, 2, 0) ) for _ in range(batch_gen)]
+            imgemb = [dataset.get_cond_image(np.random.randint(len(dataset)))  for _ in range(batch_gen)]
+            imgemb = torch.from_numpy(np.stack(imgemb)).pin_memory().to(opts.device, dtype=torch.float32)
             with torch.no_grad():
-                imgemb = encoder.encode_image(torch.cat([preprocess(img).unsqueeze(0).to(opts.device) for img in imgemb], axis=0))
+                imgemb = encoder.encode_image(preprocess(imgemb))
             
             images.append(run_generator(z, c, imgemb))
         images = torch.cat(images)
