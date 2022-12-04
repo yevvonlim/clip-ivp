@@ -263,7 +263,6 @@ class ImageConditionalDataset(Dataset):
             if not os.path.isfile(self._img_pair_dict[key]):
                 raise IOError(f'No corresponding conditional image!{self._img_pair_dict[key]}')
         
-        
         name = os.path.splitext(os.path.basename(self._pair_path))[0]
         raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
         self._cond_shape = [len(list(set(val for val in self._img_pair_dict.values())))] + list(self._load_conditional_image(0).shape)
@@ -365,3 +364,65 @@ class ImageConditionalDataset(Dataset):
         d.xflip = (int(self._xflip[idx]) != 0)
         d.raw_label = self._get_raw_labels()[d.raw_idx].copy()
         return d
+
+class ImageConditionalTestDataset(ImageConditionalDataset):
+    def __init__(self, **super_kwargs):
+        self._pair_id = {'left' : 0,
+                         'right': 1,
+                         'lower': 2,
+                         'upper': 3, }
+        super().__init__(**super_kwargs)
+        self.condNames = list(set(self._img_pair_dict.values()))
+        
+        self.cond_pair_dict = {fname: self._get_pair_name(fname) for fname in self.condNames}
+        self._raw_idx = np.arange(len(self.condNames), dtype=np.int64)
+        
+        
+    def __len__(self):
+        return len(self.condNames)
+
+    def _get_pair_name(self, cond_name):
+        fnames = []
+        for key in self._img_pair_dict.keys():
+            if self._img_pair_dict[key] == cond_name:
+                fnames.append([self._pair_id[os.path.dirname(key)], key])
+        fnames = np.array(sorted(fnames))
+        return fnames[:, 1]
+
+    def _load_cond_image(self, raw_idx):
+        fname = self.condNames[raw_idx]
+        with self._open_file(fname) as f:
+            if pyspng is not None and self._file_ext(fname) == '.png':
+                image = pyspng.load(f.read())
+            else:
+                image = np.array(PIL.Image.open(f))
+        if image.ndim == 2:
+            image = image[:, :, np.newaxis] # HW => HWC
+        image = image.transpose(2, 0, 1) # HWC => CHW
+        return image
+
+    def _load_raw_pair_images(self, raw_idx):
+        imgs = self.cond_pair_dict[self.condNames[raw_idx]]
+        out = []
+        for path in imgs:
+            with self._open_file(path) as f:
+                if pyspng is not None and self._file_ext(path) == '.png':
+                    image = pyspng.load(f.read())
+                else:
+                    image = np.array(PIL.Image.open(f))
+            if image.ndim == 2:
+                image = image[:, :, np.newaxis] # HW => HWC
+            out.append(image.transpose(2, 0, 1)) # HWC => CHW
+        # left, right, lower, upper order
+        return out
+
+    def __getitem__(self, idx):
+        cond_img = self._load_cond_image(self._raw_idx[idx])
+        pair_imgs = self._load_raw_pair_images(self._raw_idx[idx])
+        fname = os.path.split(self._image_fnames[self._raw_idx[idx]])[-1]
+        
+        assert isinstance(cond_img, np.ndarray)
+        assert list(cond_img.shape) == self.condimg_shape
+        assert cond_img.dtype == np.uint8
+
+        return cond_img.copy(), pair_imgs.copy(), fname

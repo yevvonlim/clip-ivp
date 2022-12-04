@@ -125,7 +125,7 @@ def setup_training_loop_kwargs(
         assert encoder in ENCODERS
         img_dim = 512 
         args.image_encoder_kwargs = dnnlib.EasyDict(name=encoder)
-    args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
+    args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=3)
     try:
         training_set = dnnlib.util.construct_class_by_name(**args.training_set_kwargs) # subclass of training.dataset.Dataset
         args.training_set_kwargs.resolution = training_set.resolution # be explicit about resolution
@@ -204,7 +204,7 @@ def setup_training_loop_kwargs(
 
     args.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
-    args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
+    args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma, image_encoder_kwargs=dnnlib.EasyDict(name='ViT-B/32'))
 
     args.total_kimg = spec.kimg
     args.batch_size = spec.mb
@@ -270,7 +270,7 @@ def setup_training_loop_kwargs(
             raise UserError('--p must be between 0 and 1')
         desc += f'-p{p:g}'
         args.augment_p = p
-
+        
     if target is not None:
         assert isinstance(target, float)
         if aug != 'ada':
@@ -294,7 +294,9 @@ def setup_training_loop_kwargs(
         'color':  dict(brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1),
         'filter': dict(imgfilter=1),
         'noise':  dict(noise=1),
+        'imgcond': dict(xint=1, scale=1, rotate=1, aniso=1, xfrac=1, brightness=1, contrast=1),
         'cutout': dict(cutout=1),
+        'cn':     dict(brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1, noise=1),
         'bg':     dict(xflip=1, rotate90=1, xint=1, scale=1, rotate=1, aniso=1, xfrac=1),
         'bgc':    dict(xflip=1, rotate90=1, xint=1, scale=1, rotate=1, aniso=1, xfrac=1, brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1),
         'bgcf':   dict(xflip=1, rotate90=1, xint=1, scale=1, rotate=1, aniso=1, xfrac=1, brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1, imgfilter=1),
@@ -305,7 +307,7 @@ def setup_training_loop_kwargs(
     assert augpipe in augpipe_specs
     if aug != 'noaug':
         args.augment_kwargs = dnnlib.EasyDict(class_name='training.augment.AugmentPipe', **augpipe_specs[augpipe])
-
+        args.cond_augment_kwargs = dnnlib.EasyDict(class_name='training.augment.AugmentPipe', **augpipe_specs['imgcond'])
     # ----------------------------------
     # Transfer learning: resume, freezed
     # ----------------------------------

@@ -102,7 +102,7 @@ def training_loop(
     D_opt_kwargs            = {},       # Options for discriminator optimizer.
 
     image_encoder_kwargs    = {},       # Options for image encoder.
-
+    cond_augment_kwargs     = None,
     augment_kwargs          = None,     # Options for augmentation pipeline. None = disable.
     loss_kwargs             = {},       # Options for loss function.
     metrics                 = [],       # Metrics to evaluate during training.
@@ -186,10 +186,16 @@ def training_loop(
     if rank == 0:
         print('Setting up augmentation...')
     augment_pipe = None
+    cond_augment_pipe = None
     ada_stats = None
     if (augment_kwargs is not None) and (augment_p > 0 or ada_target is not None):
         augment_pipe = dnnlib.util.construct_class_by_name(**augment_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
         augment_pipe.p.copy_(torch.as_tensor(augment_p))
+        
+        if cond_augment_kwargs is not None:
+            cond_augment_pipe = dnnlib.util.construct_class_by_name(**cond_augment_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+            cond_augment_pipe.p.copy_(torch.as_tensor(augment_p))
+        
         if ada_target is not None:
             ada_stats = training_stats.Collector(regex='Loss/signs/real')
 
@@ -197,7 +203,7 @@ def training_loop(
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe)]:
+    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe), ('cond_augment_pipe', cond_augment_pipe)]:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
             module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False)
@@ -286,11 +292,12 @@ def training_loop(
             if training_set_kwargs.class_name == 'training.dataset.ImageConditionalDataset':
                 phase_real_img, phase_real_c, phase_real_imgemb = next(training_set_iterator)
                 # real_imgs = torch.cat([preprocess(to_pil_image(t_img.squeeze())).unsqueeze(0).to(device) for t_img in torch.chunk(phase_real_imgemb, phase_real_imgemb.shape[0], axis=0)], axis=0)
-                with torch.no_grad():
-                    phase_real_imgemb = encoder.encode_image(preprocess(phase_real_imgemb.to(device, dtype=torch.float32))).split(batch_gpu)
+                # with torch.no_grad():
+                #     phase_real_imgemb = encoder.encode_image(preprocess(phase_real_imgemb.to(device, dtype=torch.float32))).split(batch_gpu)
             else:
                 phase_real_img, phase_real_c = next(training_set_iterator)
             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
+            phase_real_imgemb = phase_real_imgemb.to(device, torch.float32).split(batch_gpu)
             phase_real_c = phase_real_c.to(device).split(batch_gpu)
             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
             all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
@@ -298,11 +305,11 @@ def training_loop(
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
             all_gen_imgemb = [training_set.get_cond_image(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
-            all_gen_imgemb = preprocess(torch.from_numpy(np.stack(all_gen_imgemb)).pin_memory().to(device, dtype=torch.float32))
+            all_gen_imgemb = torch.from_numpy(np.stack(all_gen_imgemb)).pin_memory().to(device, dtype=torch.float32)
             
             # all_gen_imgemb = [Image.fromarray(training_set.get_cond_image(np.random.randint(len(training_set))).transpose(1, 2, 0) ) for _ in range(len(phases) * batch_size)]
-            with torch.no_grad():
-                all_gen_imgemb = encoder.encode_image(all_gen_imgemb)
+            # with torch.no_grad():
+            #     all_gen_imgemb = encoder.encode_image(all_gen_imgemb)
             all_gen_imgemb = [phase_gen_imgemb.split(batch_gpu) for phase_gen_imgemb in all_gen_imgemb.split(batch_size)]
             
 
@@ -353,6 +360,8 @@ def training_loop(
             ada_stats.update()
             adjust = np.sign(ada_stats['Loss/signs/real'] - ada_target) * (batch_size * ada_interval) / (ada_kimg * 1000)
             augment_pipe.p.copy_((augment_pipe.p + adjust).max(misc.constant(0, device=device)))
+            if cond_augment_pipe is not None:
+                cond_augment_pipe.p.copy_((cond_augment_pipe.p + adjust).max(misc.constant(0, device=device)))
 
         # Perform maintenance tasks once per tick.
         done = (cur_nimg >= total_kimg * 1000)
@@ -395,7 +404,7 @@ def training_loop(
         snapshot_data = None
         if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
             snapshot_data = dict(training_set_kwargs=dict(training_set_kwargs))
-            for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe)]:
+            for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe), ('cond_augment_pipe', cond_augment_pipe)]:
                 if module is not None:
                     if num_gpus > 1:
                         misc.check_ddp_consistency(module, ignore_regex=r'.*\.w_avg')

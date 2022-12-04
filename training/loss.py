@@ -11,7 +11,10 @@ import torch
 from torch_utils import training_stats
 from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
-
+import clip
+from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+from torchvision.transforms import InterpolationMode
+BICUBIC = InterpolationMode.BICUBIC
 #----------------------------------------------------------------------------
 
 class Loss:
@@ -20,22 +23,33 @@ class Loss:
 
 #----------------------------------------------------------------------------
 
+def _dummy(tensor, std=0.1):
+    # noise = torch.rand_like(tensor).to(tensor) * std
+    return tensor 
+
 class StyleGAN2Loss(Loss):
-    def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2):
+    def __init__(self, device, G_mapping, G_synthesis, D, image_encoder_kwargs, augment_pipe=None, cond_augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
         self.G_synthesis = G_synthesis
         self.D = D
         self.augment_pipe = augment_pipe
+        self.cond_augment_pipe = cond_augment_pipe if cond_augment_pipe is not None else _dummy
+
         self.style_mixing_prob = style_mixing_prob
         self.r1_gamma = r1_gamma
         self.pl_batch_shrink = pl_batch_shrink
         self.pl_decay = pl_decay
         self.pl_weight = pl_weight
         self.pl_mean = torch.zeros([], device=device)
-
+        self.encoder, _ = clip.load(**image_encoder_kwargs, device=device)
+        self.preprocess = Compose([
+            Resize(224, interpolation=BICUBIC),
+            Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+        ])
     def run_G(self, z, c, sync, img_emb=None):
+
         with misc.ddp_sync(self.G_mapping, sync):
             ws = self.G_mapping(z, c, img_emb)
             if self.style_mixing_prob > 0:
@@ -50,6 +64,10 @@ class StyleGAN2Loss(Loss):
     def run_D(self, img, c, sync, img_emb=None):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
+            # # img_emb = self.cond_augment_pipe(cond_img)
+            # with torch.no_grad():
+            #     img_emb = self.encoder.encode_image(self.preprocess(img_emb))
+
         with misc.ddp_sync(self.D, sync):
             logits = self.D(img, c, img_emb)
         return logits
@@ -60,7 +78,12 @@ class StyleGAN2Loss(Loss):
         do_Dmain = (phase in ['Dmain', 'Dboth'])
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
-
+        if self.augment_pipe is not None:
+            gen_emb = self.cond_augment_pipe(self.preprocess(gen_emb))
+            real_emb = self.cond_augment_pipe(self.preprocess(real_emb))
+            with torch.no_grad():
+                gen_emb = self.encoder.encode_image(gen_emb)
+                real_emb = self.encoder.encode_image(real_emb)
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
             with torch.autograd.profiler.record_function('Gmain_forward'):

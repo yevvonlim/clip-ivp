@@ -10,7 +10,7 @@ oris = ['left', 'right', 'lower', 'upper']
 #       LOWER: 2
 #       UPPER: 3
 label = {"labels":[]}
-paths = [glob.glob(f'/intraoral/stylegan2-ada-pytorch/data/train/{ori}/*.png') for ori in oris]
+paths = [glob.glob(f'/intraoral/stylegan2-ada-pytorch/data/test/pair/{ori}/*.png') for ori in oris]
 for label_idx, path_list in enumerate(paths):
     print(f"{oris[label_idx]} starts! "+"="*20+'\n')
     for path in tqdm(path_list):
@@ -19,5 +19,5 @@ for label_idx, path_list in enumerate(paths):
         label_ele = [os.path.join(oris[label_idx], name), label_idx]
         label['labels'].append(label_ele)
 
-with open('/intraoral/stylegan2-ada-pytorch/data/train/dataset.json', 'w') as f:
+with open('/intraoral/stylegan2-ada-pytorch/data/test/dataset.json', 'w') as f:
     json.dump(label, f)
