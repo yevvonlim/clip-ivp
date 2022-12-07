@@ -26,7 +26,8 @@ from torch_utils import custom_ops
 
 ENCODERS = ['RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64',
             'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
-
+encoder_dims = {model:512 for model in ENCODERS}
+encoder_dims['ViT-L/14']=768
 #----------------------------------------------------------------------------
 
 class UserError(Exception):
@@ -123,7 +124,7 @@ def setup_training_loop_kwargs(
         if encoder is None:
             encoder = 'ViT-B/32'
         assert encoder in ENCODERS
-        img_dim = 512 
+        img_dim = encoder_dims[encoder]
         args.image_encoder_kwargs = dnnlib.EasyDict(name=encoder)
     args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=3)
     try:
@@ -204,7 +205,7 @@ def setup_training_loop_kwargs(
 
     args.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
-    args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma, image_encoder_kwargs=dnnlib.EasyDict(name='ViT-B/32'))
+    args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma, image_encoder_kwargs=dnnlib.EasyDict(name=encoder))
 
     args.total_kimg = spec.kimg
     args.batch_size = spec.mb
@@ -440,7 +441,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--gamma', help='Override R1 gamma', type=float)
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--batch', help='Override batch size', type=int, metavar='INT')
-
+@click.option('--encoder', help='CLIP encoder name', type=click.Choice(ENCODERS))
 # Discriminator augmentation.
 @click.option('--aug', help='Augmentation mode [default: ada]', type=click.Choice(['noaug', 'ada', 'fixed']))
 @click.option('--p', help='Augmentation probability for --aug=fixed', type=float)
