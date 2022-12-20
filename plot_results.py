@@ -4,7 +4,7 @@ import numpy as np
 
 str_plt_style = 'bmh'
 plt.style.use([str_plt_style])
-fig, ax = plt.subplots(1,1,figsize=(9,5))
+fig, ax = plt.subplots(1,1,figsize=(13,5))
 plt.ylabel('FID')
 plt.xlabel('Iterations')
 
