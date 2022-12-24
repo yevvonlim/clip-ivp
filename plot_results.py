@@ -24,7 +24,7 @@ for key in keys:
             steps.append(int(line['snapshot_pkl'].replace('network-snapshot-', '').replace('.pkl', '')))
     progress[key] = list(zip(steps, fid))
     minidx = np.argmin(fid)
-    plt.plot(steps, fid, label=key)
+    plt.plot(steps, fid, label=f"$\gamma= {key.replace('gamma', '')}$")
     plt.scatter(steps[minidx], fid[minidx], color='black')
 
 # Function x**(1/2)
