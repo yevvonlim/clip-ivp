@@ -10,8 +10,8 @@ plt.xlabel('Iterations')
 
 root_dir = '/root/stylegan2-ada-intraoral/class-conditional/'
 keys = ['gamma5', 'gamma10', 'gamma15']
-progress_path = {key:f'{root_dir}cond-auto1-{key}-resumecustom/metric-fid50k_full.jsonl' for key in keys if key != 'gamma10'}
-progress_path['gamma10'] = '/root/stylegan2-ada-intraoral/class-conditional/gamma10/metric-fid50k_full.jsonl'
+progress_path = {key:f'{root_dir}cond-auto1-{key}-resumecustom/metric-fid50k_full.jsonl' for key in keys}
+# progress_path['gamma10'] = '/root/stylegan2-ada-intraoral/class-conditional/gamma10/metric-fid50k_full.jsonl'
 progress = {}
 for key in keys:
     fid = []
