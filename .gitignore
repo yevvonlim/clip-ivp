@@ -4,5 +4,6 @@ out/
 data/
 *checkpoints*/
 testout/
+test_out/
 class-conditional/
 intraoral.zip

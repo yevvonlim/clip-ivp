@@ -172,14 +172,16 @@ def training_loop(
         with dnnlib.util.open_url(resume_pkl) as f:
             resume_data = legacy.load_network_pkl(f)
         for name, module in [('G', G), ('D', D), ('G_ema', G_ema)]:
-            misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
+            try:
+                misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
+            except:
+                pass
 
     # Print network summary tables.
     if rank == 0:
-        z = torch.empty([batch_gpu, G.z_dim], device=device)
         c = torch.empty([batch_gpu, G.c_dim], device=device)
         img_c = torch.empty([batch_gpu, G.mapping.img_dim], device=device) if G.mapping.img_dim != 0 else None
-        img = misc.print_module_summary(G, [z, c, img_c])
+        img = misc.print_module_summary(G, [c, None, img_c])
         misc.print_module_summary(D, [img, c, img_c])
 
     # Setup augmentation.
@@ -244,17 +246,18 @@ def training_loop(
         grid_size, images, labels, cond_imgs = setup_snapshot_image_grid(training_set=training_set)
         images = np.concatenate([cond_imgs, images], axis=-1)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
-        grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
+        # grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
         
         
         with torch.no_grad():
+            encoder.requires_grad_(False)
             grid_emb = encoder.encode_image(preprocess(torch.from_numpy(cond_imgs).to(device, dtype=torch.float32))).split(batch_gpu)
         # grid_cond_imgs = np.concatenate([np.array(img).transpose(2, 0, 1)[np.newaxis, ...] for img in grid_cond_imgs], axis=0)
         fake_cond_imgs = (cond_imgs - 127.5)/127.5
        
         shape_ = training_set.get_cond_image(0).shape
-        images = torch.cat([G_ema(z=z, c=c, img_emb=emb, noise_mode='const').cpu().squeeze() for z, c, emb in zip(grid_z, grid_c, grid_emb)]).numpy().reshape(-1, *shape_)
+        images = torch.cat([G_ema(c=c, img_emb=emb, noise_mode='const').cpu().squeeze() for c, emb in zip(grid_c, grid_emb)]).numpy().reshape(-1, *shape_)
         images = np.concatenate([fake_cond_imgs, images], axis=-1)
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
 
@@ -299,8 +302,8 @@ def training_loop(
             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
             phase_real_imgemb = phase_real_imgemb.to(device, torch.float32).split(batch_gpu)
             phase_real_c = phase_real_c.to(device).split(batch_gpu)
-            all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
-            all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
+            # all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
+            # all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
             all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
@@ -314,7 +317,7 @@ def training_loop(
             
 
         # Execute training phases.
-        for phase, phase_gen_z, phase_gen_c, phase_gen_imgemb in zip(phases, all_gen_z, all_gen_c, all_gen_imgemb):
+        for phase, phase_gen_c, phase_gen_imgemb in zip(phases, all_gen_c, all_gen_imgemb):
             if batch_idx % phase.interval != 0:
                 continue
 
@@ -325,10 +328,10 @@ def training_loop(
             phase.module.requires_grad_(True)
 
             # Accumulate gradients over multiple rounds.
-            for round_idx, (real_img, real_c, real_emb, gen_z, gen_c, gen_emb) in enumerate(zip(phase_real_img, phase_real_c, phase_real_imgemb, phase_gen_z, phase_gen_c, phase_gen_imgemb)):
+            for round_idx, (real_img, real_c, real_emb, gen_c, gen_emb) in enumerate(zip(phase_real_img, phase_real_c, phase_real_imgemb, phase_gen_c, phase_gen_imgemb)):
                 sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
                 gain = phase.interval
-                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, real_emb=real_emb, gen_z=gen_z, gen_c=gen_c, gen_emb=gen_emb, sync=sync, gain=gain)
+                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, real_emb=real_emb, gen_c=gen_c, gen_emb=gen_emb, sync=sync, gain=gain)
 
             # Update weights.
             phase.module.requires_grad_(False)
@@ -395,7 +398,7 @@ def training_loop(
 
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-            images = torch.cat([G_ema(z=z, c=c, img_emb=emb, noise_mode='const').cpu() for z, c, emb in zip(grid_z, grid_c, grid_emb)]).numpy()
+            images = torch.cat([G_ema(c=c, img_emb=emb, noise_mode='const').cpu() for  c, emb in zip(grid_c, grid_emb)]).numpy()
             images = np.concatenate([fake_cond_imgs, images], axis=-1)
             save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 

@@ -218,24 +218,26 @@ class MappingNetwork(torch.nn.Module):
         if num_ws is not None and w_avg_beta is not None:
             self.register_buffer('w_avg', torch.zeros([w_dim]))
 
-    def forward(self, z, c, img_emb=None, truncation_psi=1, truncation_cutoff=None, skip_w_avg_update=False):
+    def forward(self, c, img_emb=None, z=None, truncation_psi=1, feed_clip_latent=False, truncation_cutoff=None, skip_w_avg_update=False):
         # Embed, normalize, and concat inputs.
         x = None
         with torch.autograd.profiler.record_function('input'):
-            if self.z_dim > 0:
+           
+            if self.z_dim > 0 and self.img_dim <= 0:
                 misc.assert_shape(z, [None, self.z_dim])
                 x = normalize_2nd_moment(z.to(torch.float32))
+
+            elif self.z_dim >= 0 and self.img_dim > 0:
+                misc.assert_shape(img_emb, [None, self.img_dim])
+                x = normalize_2nd_moment(self.img_embed(img_emb.to(torch.float32)))
 
             if self.c_dim > 0:
                 misc.assert_shape(c, [None, self.c_dim])
                 y = normalize_2nd_moment(self.embed(c.to(torch.float32)))
-                if self.img_dim > 0:
-                    # print("="*20)
-                    # print(f"img_dim: {self.img_dim}\nimg_emb actual shape: {img_emb.shape}")
-                    # print(f"z: {z}\nc.shape: {c.shape}")
-                    # print("="*20)
-                    misc.assert_shape(img_emb, [None, self.img_dim])
-                    y += normalize_2nd_moment(self.img_embed(img_emb.to(torch.float32)))
+
+                # if self.img_dim > 0:
+                #     misc.assert_shape(img_emb, [None, self.img_dim])
+                #     y += normalize_2nd_moment(self.img_embed(img_emb.to(torch.float32)))
 
                 x = torch.cat([x, y], dim=1) if x is not None else y
 
@@ -510,8 +512,8 @@ class Generator(torch.nn.Module):
         self.num_ws = self.synthesis.num_ws
         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
         
-    def forward(self, z, c, img_emb=None, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
-        ws = self.mapping(z, c, img_emb=img_emb, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
+    def forward(self, c, z=None, img_emb=None, truncation_psi=1, feed_clip_latent=False, truncation_cutoff=None, **synthesis_kwargs):
+        ws = self.mapping(c, z=z, img_emb=img_emb, feed_clip_latent=feed_clip_latent, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
         img = self.synthesis(ws, **synthesis_kwargs)
         return img
 
@@ -727,7 +729,7 @@ class Discriminator(torch.nn.Module):
             setattr(self, f'b{res}', block)
             cur_layer_idx += block.num_layers
         if c_dim > 0:
-            self.mapping = MappingNetwork(z_dim=0, c_dim=c_dim, w_dim=cmap_dim, num_ws=None, w_avg_beta=None, **mapping_kwargs)
+            self.mapping = MappingNetwork(z_dim=512, c_dim=c_dim, w_dim=cmap_dim, num_ws=None, w_avg_beta=None, **mapping_kwargs)
         self.b4 = DiscriminatorEpilogue(channels_dict[4], cmap_dim=cmap_dim, resolution=4, **epilogue_kwargs, **common_kwargs)
 
     def forward(self, img, c, img_emb=None, **block_kwargs):
@@ -738,7 +740,7 @@ class Discriminator(torch.nn.Module):
 
         cmap = None
         if self.c_dim > 0:
-            cmap = self.mapping(None, c, img_emb)
+            cmap = self.mapping(c, img_emb)
         x = self.b4(x, img, cmap)
         return x
 

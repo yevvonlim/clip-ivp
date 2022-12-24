@@ -49,7 +49,7 @@ def generate_images(
     device = torch.device('cuda')
     with dnnlib.util.open_url(network_pkl) as f:
         G = legacy.load_network_pkl(f)['G_ema'].to(device) # type: ignore
-    encoder, preprocess = clip.load(name='ViT-B/32', device=device)
+    encoder, preprocess = clip.load(name='ViT-L/14', device=device)
     # preprocess = Compose([
     #     Resize(224, interpolation=BICUBIC),
     #     Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
