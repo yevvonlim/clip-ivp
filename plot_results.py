@@ -9,8 +9,10 @@ plt.ylabel('FID')
 plt.xlabel('Iterations')
 
 root_dir = '/root/stylegan2-ada-intraoral/class-conditional/'
-keys = ['gamma5', 'gamma10', 'gamma15']
-progress_path = {key:f'{root_dir}cond-auto1-{key}-resumecustom/metric-fid50k_full.jsonl' for key in keys}
+# keys = ['gamma5', 'gamma10', 'gamma15']
+# progress_path = {key:f'{root_dir}cond-auto1-{key}-resumecustom/metric-fid50k_full.jsonl' for key in keys}
+keys = ['gamma5']
+progress_path= {'gamma5':'/root/stylegan2-ada-intraoral/class-conditional/00016--cond-auto2-gamma5-kimg15000-resumecustom/metric-fid50k_full.jsonl'}
 # progress_path['gamma10'] = '/root/stylegan2-ada-intraoral/class-conditional/gamma10/metric-fid50k_full.jsonl'
 progress = {}
 for key in keys:
@@ -48,4 +50,4 @@ plt.ylim(top=20, bottom=1)
 plt.xlim(left=0)
 # plt.yscale('function', functions=(forward, inverse))
 ax.legend()
-plt.savefig('/root/stylegan2-ada-intraoral/gamma_sweep.png')
+plt.savefig('/root/stylegan2-ada-intraoral/gamma_5_clip_latent.png')
