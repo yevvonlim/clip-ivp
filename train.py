@@ -26,8 +26,7 @@ from torch_utils import custom_ops
 
 ENCODERS = ['RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64',
             'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
-encoder_dims = {model:512 for model in ENCODERS}
-encoder_dims['ViT-L/14']=768
+encoder_dims = {model:512 if 'ViT-L' not in model else 768 for model in ENCODERS}
 #----------------------------------------------------------------------------
 
 class UserError(Exception):
