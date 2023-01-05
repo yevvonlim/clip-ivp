@@ -134,7 +134,7 @@ def training_loop(
     device = torch.device('cuda', rank)
     encoder, _ = clip.load(**image_encoder_kwargs, device=device)
     preprocess = Compose([
-        Resize(224, interpolation=BICUBIC),
+        Resize(encoder.visual.input_resolution, interpolation=BICUBIC),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
     np.random.seed(random_seed * num_gpus + rank)
