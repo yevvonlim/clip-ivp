@@ -42,8 +42,19 @@ def lerp(z1, z2, n=5):
     lerps.append(z2)
     return lerps
 
+def slerp(z1, z2, n=5):
+    cos = z1@z2.T / (torch.norm(z1) * torch.norm(z2))
+    theta = torch.arccos(cos)
+
+    alphas = torch.arange(0, 1+1e-4, step=1/n)
+    slerps = []
+    for alpha in alphas:
+        slerps.append((torch.sin((1-alpha)*theta)*z1 + torch.sin(alpha*theta)*z2)/torch.sin(theta))
+
+    return slerps
+
 device = torch.device('cuda')
-network_pkl = '/root/stylegan2-ada-intraoral/class-conditional/cond-auto1-gamma5-resumecustom/network-snapshot-012000.pkl'
+network_pkl = '/intraoral/stylegan2-ada-pytorch/class-conditional/vit-L-gamma5-clip/network-snapshot-007600.pkl'
 print('Loading networks from "%s"...' % network_pkl)
 with dnnlib.util.open_url(network_pkl) as f:
     G = legacy.load_network_pkl(f)['G_ema'].to(device) # type: ignore
@@ -54,10 +65,10 @@ preprocess = Compose([
     Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
 ])
 
-root = '/root/stylegan2-ada-intraoral/latent_projection/'
+root = '/intraoral/stylegan2-ada-pytorch/latent_projection/'
 outdir = root
 resizer = Resize((180, 300))
-seeds = [0, 1, 11, 5, 97]
+seeds = [0]
 
 mode = 'z_interpolate'
 truncation_psi = 0.7
@@ -74,8 +85,10 @@ for seed in tqdm(seeds):
             l1 = encoder.encode_image(preprocess(img1))
             l2 = encoder.encode_image(preprocess(img2))
 
+        # l1 *= 10
+        # l2 *= 10
         if mode == 'z_interpolate':
-            latents = lerp(l1, l2, 5)
+            latents = slerp(l1, l2, 5)
 
             for emb in latents:
                 rows = []
@@ -84,7 +97,7 @@ for seed in tqdm(seeds):
                     label = torch.zeros([1, G.c_dim], device=device)
                     label[:, class_idx] = 1
                     z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-                    img = G(z, label, img_emb=emb, noise_mode='random', truncation_psi=truncation_psi)
+                    img = G(c=label, img_emb=emb, z=z, noise_mode='random', truncation_psi=truncation_psi)
                     # img = G(z, label, img_emb=emb, noise_mode='const')
                     img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0]
                     img = resizer(img).permute(1, 2, 0)
