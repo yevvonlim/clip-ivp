@@ -18,17 +18,7 @@ from torchvision.transforms import InterpolationMode
 BICUBIC = InterpolationMode.BICUBIC
 
 
-class CLIP_Projector(torch.nn.Module):
-    def __init__(self, encoder, projector, device):
-        super().__init__()
-        self.encoder = encoder
-        self.projector = projector
-        self.device = device
 
-    def forward(self, x):
-        with torch.no_grad():
-            x.to(self.device)
-            return self.projector(self.encoder.encode_image(x))
 
 def _convert_image_to_rgb(image):
     return image.convert("RGB")
@@ -42,17 +32,6 @@ def lerp(z1, z2, n=5):
     lerps.append(z2)
     return lerps
 
-def slerp(z1, z2, n=5):
-    cos = z1@z2.T / (torch.norm(z1) * torch.norm(z2))
-    theta = torch.arccos(cos)
-
-    alphas = torch.arange(0, 1+1e-4, step=1/n)
-    slerps = []
-    for alpha in alphas:
-        slerps.append((torch.sin((1-alpha)*theta)*z1 + torch.sin(alpha*theta)*z2)/torch.sin(theta))
-
-    return slerps
-
 device = torch.device('cuda')
 network_pkl = '/intraoral/stylegan2-ada-pytorch/class-conditional/vit-L-gamma5-clip/network-snapshot-007600.pkl'
 print('Loading networks from "%s"...' % network_pkl)
@@ -61,43 +40,61 @@ with dnnlib.util.open_url(network_pkl) as f:
 
 encoder, _ = clip.load(name='ViT-L/14', device=device)
 preprocess = Compose([
-    Resize(encoder.visual.input_resolution, interpolation=BICUBIC),
+    Resize((224, 224), interpolation=BICUBIC),
     Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
 ])
 
-root = '/intraoral/stylegan2-ada-pytorch/latent_projection/'
+root = '/intraoral/stylegan2-ada-pytorch/extrapolation/'
 outdir = root
 resizer = Resize((180, 300))
-seeds = [0]
-
+seeds = [0, 1, 2, 3, 5, 8]
+seed = 0
+k=10
 mode = 'z_interpolate'
 truncation_psi = 0.7
-alpha = 1
-start_imgs = [(torch.from_numpy(np.array(Image.open(path)).transpose(2, 0, 1)).to(device, dtype=torch.float32).unsqueeze(0), path) for path in sorted(glob(os.path.join(root, 'data/start/*.png')))]
-end_imgs = [torch.from_numpy(np.array(Image.open(path)).transpose(2, 0, 1)).to(device, dtype=torch.float32).unsqueeze(0) for path in sorted(glob(os.path.join(root, 'data/end/*.png')))]
+alphas = np.linspace(0, 3, 3, endpoint=True)
+# idx = np.random.random_integers(0, 767, 20)
 
-for seed in tqdm(seeds):
-    for i, (img1, img2) in (enumerate(zip(start_imgs, end_imgs))):
+sources = [(torch.from_numpy(np.array(Image.open(path).convert("RGB")).transpose(2, 0, 1)).to(device, dtype=torch.float32).unsqueeze(0), path) for path in sorted(glob(os.path.join(root, 'source/*.png')))]
+before_imgs = [torch.from_numpy(np.array(Image.open(path)).transpose(2, 0, 1)).to(device, dtype=torch.float32).unsqueeze(0) for path in sorted(glob(os.path.join(root, 'orthodontic/before/*.png')))]
+after_imgs = [torch.from_numpy(np.array(Image.open(path)).transpose(2, 0, 1)).to(device, dtype=torch.float32).unsqueeze(0) for path in sorted(glob(os.path.join(root, 'orthodontic/after/*.png')))]
+
+for source in tqdm(sources):
+    imgname = os.path.basename(source[1])
+    source = source[0]
+    with torch.no_grad():
+        s = encoder.encode_image(preprocess(source))
+    
+    for i, (img1, img2) in (enumerate(zip(before_imgs, after_imgs))):
         gens = []
-        imgname = os.path.basename(img1[1])
-        img1 = img1[0]
+        
         with torch.no_grad():
             l1 = encoder.encode_image(preprocess(img1))
             l2 = encoder.encode_image(preprocess(img2))
 
-        # l1 *= 10
-        # l2 *= 10
         if mode == 'z_interpolate':
-            latents = slerp(l1, l2, 5)
-
+            latents = [alpha * (l2-l1) for alpha in alphas]
+            
             for emb in latents:
                 rows = []
                 for class_idx in range(4):
                     # Labels. 
                     label = torch.zeros([1, G.c_dim], device=device)
                     label[:, class_idx] = 1
-                    z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-                    img = G(c=label, img_emb=emb, z=z, noise_mode='random', truncation_psi=truncation_psi)
+                    # z = torch.from_numpy(np.random.RandomState(seed).randn(1, emb.shape[1])).to(device)
+                    # emb += z*0.1
+                    # k = -2 * s@emb.T / (emb.norm()**2 + 1e-4)
+                    # emb_tmp = s + emb*k
+
+                    emb_tmp = s+emb
+                    # emb_tmp = (emb_tmp - emb_tmp.mean()) / emb_tmp.std()
+
+                    # emb_tmp = emb
+
+                    # emb_tmp = torch.from_numpy(np.random.RandomState(seed).randn(1, emb.shape[1])).to(device)
+                    # emb_tmp[0, idx[:10]] = -1
+                    # emb_tmp[0, idx[10:]] = 3
+                    img = G(label, img_emb=emb_tmp, noise_mode='random', truncation_psi=truncation_psi)
                     # img = G(z, label, img_emb=emb, noise_mode='const')
                     img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0]
                     img = resizer(img).permute(1, 2, 0)
@@ -114,8 +111,8 @@ for seed in tqdm(seeds):
                 label = torch.zeros([1, G.c_dim], device=device)
                 label[:, class_idx] = 1
                 z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-                w1 = G.mapping(z, label, img_emb=l1, truncation_psi=truncation_psi)
-                w2 = G.mapping(z, label, img_emb=l2, truncation_psi=truncation_psi)
+                w1 = G.mapping(label, img_emb=l1, truncation_psi=truncation_psi)
+                w2 = G.mapping(label, img_emb=l2, truncation_psi=truncation_psi)
                 latents = lerp(w1, w2, 5)
                 for emb in latents:
                     img = G.synthesis(emb, noise_mode='const')
@@ -130,16 +127,14 @@ for seed in tqdm(seeds):
 
         height = img.shape[0]
 
-        img1 = img1[0]
+        img1 = source[0]
+
         img1 = resizer(img1)
 
         input_height = 180
         img1 = torch.nn.functional.pad(img1, (0, 10, int((height-input_height)/2), height - input_height -int((height-input_height)/2)), value=255).permute(1, 2, 0)
 
-        img = torch.cat([img1, img], axis=1)
-        img2 = img2[0]
-        img2 = resizer(img2)
-        img2 = torch.nn.functional.pad(img2, (10, 0, int((height-input_height)/2), height - input_height - int((height-input_height)/2)), value=255).permute(1, 2, 0)
-
-        img = torch.cat([img, img2], axis=1).to(dtype=torch.uint8)
-        Image.fromarray(img.cpu().numpy(), 'RGB').save(os.path.join(outdir, f'{imgname}_seed{seed}_{mode}_trunc_{truncation_psi}.png'))
+        img = torch.cat([img1, img], axis=1).to(dtype=torch.uint8)
+        # imgname=f'k_times_{k}'
+        Image.fromarray(img.cpu().numpy(), 'RGB').save(os.path.join(outdir, f'{imgname}_style_{i}_{mode}_trunc_{truncation_psi}.png'))
+        # break

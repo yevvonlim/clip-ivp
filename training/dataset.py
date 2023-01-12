@@ -419,7 +419,7 @@ class ImageConditionalTestDataset(ImageConditionalDataset):
     def __getitem__(self, idx):
         cond_img = self._load_cond_image(self._raw_idx[idx])
         pair_imgs = self._load_raw_pair_images(self._raw_idx[idx])
-        fname = os.path.split(self._image_fnames[self._raw_idx[idx]])[-1]
+        fname = os.path.split(self.condNames[self._raw_idx[idx]])[-1].split('.')[0]
         
         assert isinstance(cond_img, np.ndarray)
         assert list(cond_img.shape) == self.condimg_shape

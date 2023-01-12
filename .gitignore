@@ -3,7 +3,10 @@ __pycache__/
 out/
 data/
 *checkpoints*/
-testout/
+*latent_projection*/*
+extrapolation/
+
+test*/
 test_out/
 class-conditional/
 intraoral.zip
