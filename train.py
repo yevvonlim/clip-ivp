@@ -294,7 +294,7 @@ def setup_training_loop_kwargs(
         'color':  dict(brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1),
         'filter': dict(imgfilter=1),
         'noise':  dict(noise=1),
-        'imgcond': dict(xint=1, scale=1, rotate=1, aniso=1, xfrac=1, brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1),
+        'imgcond': dict(xint=1, scale=1, aniso=1, xfrac=1, brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1, rotate_max=1/12),
         'cutout': dict(cutout=1),
         'cn':     dict(brightness=1, contrast=1, lumaflip=1, hue=1, saturation=1, noise=1),
         'bg':     dict(xflip=1, rotate90=1, xint=1, scale=1, rotate=1, aniso=1, xfrac=1),
@@ -308,6 +308,7 @@ def setup_training_loop_kwargs(
     if aug != 'noaug':
         args.augment_kwargs = dnnlib.EasyDict(class_name='training.augment.AugmentPipe', **augpipe_specs[augpipe])
         args.cond_augment_kwargs = dnnlib.EasyDict(class_name='training.augment.AugmentPipe', **augpipe_specs['imgcond'])
+        
     # ----------------------------------
     # Transfer learning: resume, freezed
     # ----------------------------------
