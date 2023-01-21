@@ -229,7 +229,11 @@ class MappingNetwork(torch.nn.Module):
 
             elif self.z_dim >= 0 and self.img_dim > 0:
                 misc.assert_shape(img_emb, [None, self.img_dim])
-                x = normalize_2nd_moment(self.img_embed(img_emb.to(torch.float32)))
+
+                x = normalize_2nd_moment(self.img_embed(img_emb.to(torch.float32))) 
+                if z is not None:
+                    misc.assert_shape(z, [None, self.z_dim])
+                    x += normalize_2nd_moment(z.to(torch.float32))
 
             if self.c_dim > 0:
                 misc.assert_shape(c, [None, self.c_dim])
