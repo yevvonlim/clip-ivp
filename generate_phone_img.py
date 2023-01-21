@@ -56,6 +56,8 @@ def generate_images(
     # ])
     os.makedirs(outdir, exist_ok=True)
     condimg = PIL.Image.open(condition)
+    text = clip.tokenize(['A photo of teeth with brace']).to(device)
+    
     imgToTensor = Compose([Resize((180, 300)),
                           _convert_image_to_rgb,
                             ToTensor(),])
@@ -67,6 +69,8 @@ def generate_images(
         label[:, class_idx] = 1
         with torch.no_grad():
             emb = encoder.encode_image(preprocess(condimg).to(device, dtype=torch.float32).unsqueeze(0))
+            text_emb = encoder.encode_text(text)
+
         gen_imgs = []
         for seed in seeds:
             z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
@@ -75,6 +79,11 @@ def generate_images(
             img = resizer(img).permute(1, 2, 0)
             gen_imgs.append(img)
 
+        z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
+        img = G(z, label, img_emb=text_emb, noise_mode=noise_mode)
+        img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0]
+        img = resizer(img).permute(1, 2, 0)
+        gen_imgs.append(img)
 
         row = torch.cat([(imgToTensor(condimg) * 255).clamp(0, 255).to(device, dtype=torch.uint8).permute(1, 2, 0),
                         *gen_imgs], axis=1)

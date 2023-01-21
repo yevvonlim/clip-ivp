@@ -54,7 +54,8 @@ def slerp(z1, z2, n=5):
     return slerps
 
 device = torch.device('cuda')
-network_pkl = '/intraoral/stylegan2-ada-pytorch/class-conditional/vit-L-gamma5-clip/network-snapshot-007600.pkl'
+network_pkl = '/intraoral/stylegan2-ada-pytorch/class-conditional/vit-L-gamma5/network-snapshot-012000.pkl'
+# network_pkl = '/intraoral/stylegan2-ada-pytorch/class-conditional/vit-L-gamma5-clip/network-snapshot-007600.pkl'
 print('Loading networks from "%s"...' % network_pkl)
 with dnnlib.util.open_url(network_pkl) as f:
     G = legacy.load_network_pkl(f)['G_ema'].to(device) # type: ignore
@@ -68,7 +69,7 @@ preprocess = Compose([
 root = '/intraoral/stylegan2-ada-pytorch/latent_projection/'
 outdir = root
 resizer = Resize((180, 300))
-seeds = [0]
+seeds = [1]
 
 mode = 'z_interpolate'
 truncation_psi = 0.7
@@ -85,10 +86,12 @@ for seed in tqdm(seeds):
             l1 = encoder.encode_image(preprocess(img1))
             l2 = encoder.encode_image(preprocess(img2))
 
+        l1 = l1 / l1.norm(dim=1, keepdim=True) * 20
+        l2 = l2 / l2.norm(dim=1, keepdim=True) * 20
         # l1 *= 10
         # l2 *= 10
         if mode == 'z_interpolate':
-            latents = slerp(l1, l2, 5)
+            latents = slerp(l1, l2, 3)
 
             for emb in latents:
                 rows = []
