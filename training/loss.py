@@ -13,8 +13,7 @@ from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
 import clip
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
-from torchvision.transforms import InterpolationMode
-BICUBIC = InterpolationMode.BICUBIC
+
 #----------------------------------------------------------------------------
 
 class Loss:
@@ -45,7 +44,7 @@ class StyleGAN2Loss(Loss):
         self.pl_mean = torch.zeros([], device=device)
         self.encoder, _ = clip.load(**image_encoder_kwargs, device=device)
         self.preprocess = Compose([
-            Resize(self.encoder.visual.input_resolution, interpolation=BICUBIC),
+            Resize(self.encoder.visual.input_resolution),
             Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
         ])
     def run_G(self, c, sync, z=None, img_emb=None):

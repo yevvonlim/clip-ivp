@@ -2,7 +2,7 @@
 
 ROOT="/intraoral/stylegan2-ada-pytorch/"
 
-RESUME="${ROOT}class-conditional/vit-L-gamma5/network-snapshot-012000.pkl"
+RESUME="${ROOT}class-conditional/pretrained/network-snapshot-005241.pkl"
 OUTDIR="${ROOT}class-conditional"
 GAMMA=5
 DATA="${ROOT}data/train/pair"

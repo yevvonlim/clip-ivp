@@ -26,8 +26,8 @@ import legacy
 from metrics import metric_main
 from torchvision.transforms.functional import to_pil_image
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
-from torchvision.transforms import InterpolationMode
-BICUBIC = InterpolationMode.BICUBIC
+
+
 
 #----------------------------------------------------------------------------
 
@@ -134,7 +134,7 @@ def training_loop(
     device = torch.device('cuda', rank)
     encoder, _ = clip.load(**image_encoder_kwargs, device=device)
     preprocess = Compose([
-        Resize(encoder.visual.input_resolution, interpolation=BICUBIC),
+        Resize(encoder.visual.input_resolution),
         Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
     ])
     np.random.seed(random_seed * num_gpus + rank)
