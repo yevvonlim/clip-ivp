@@ -56,7 +56,8 @@ def generate_images(
     # ])
     os.makedirs(outdir, exist_ok=True)
     condimg = PIL.Image.open(condition)
-    text = clip.tokenize(['A photo of teeth with brace']).to(device)
+    desc = 'skewed to the left'
+    text = clip.tokenize([desc]).to(device)
     
     imgToTensor = Compose([Resize((180, 300)),
                           _convert_image_to_rgb,
@@ -74,23 +75,26 @@ def generate_images(
         gen_imgs = []
         for seed in seeds:
             z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-            img = G(z, label, img_emb=emb, noise_mode=noise_mode)
+            img = G(z=z, c=label, img_emb=text_emb, noise_mode=noise_mode)
             img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0]
             img = resizer(img).permute(1, 2, 0)
             gen_imgs.append(img)
 
-        z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-        img = G(z, label, img_emb=text_emb, noise_mode=noise_mode)
-        img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0]
-        img = resizer(img).permute(1, 2, 0)
-        gen_imgs.append(img)
+        # z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
+        # img = G(z=z, c=label, img_emb=text_emb, noise_mode=noise_mode)
+        # img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)[0]
+        # img = resizer(img).permute(1, 2, 0)
+        # gen_imgs.append(img)
 
-        row = torch.cat([(imgToTensor(condimg) * 255).clamp(0, 255).to(device, dtype=torch.uint8).permute(1, 2, 0),
-                        *gen_imgs], axis=1)
+        # row = torch.cat([(imgToTensor(condimg) * 255).clamp(0, 255).to(device, dtype=torch.uint8).permute(1, 2, 0),
+        #                 *gen_imgs], axis=1)
+        row = torch.cat(gen_imgs, axis=1)
         rows.append(row)
 
     img = torch.cat(rows, axis=0)
     _id = os.path.basename(condition)
+
+    _id = desc + '.png'
     PIL.Image.fromarray(img.cpu().numpy(), 'RGB').save(f'{outdir}/{_id}')
 
 
