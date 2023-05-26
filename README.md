@@ -1,4 +1,4 @@
-## Official implementation of CLIP-IVP: CLIP-based Intraoral View Prediction on Intraoral Images using Conditional GANs.
+## Official Implementation of CLIP-IVP.
 
 In this study, we propose a novel method called CLIP-based
 Intraoral View Prediction (CLIP-IVP) for predicting novel views of intraoral
