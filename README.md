@@ -39,4 +39,4 @@ We tested the zero-shot text-to-image generation ability of our model. For this 
 
 ### Direction-Dependency of CLIP Embeddings
 ![img](clip-direction-dependency.png)
-Since CLIP latent is unit normalized during CLIP training, we hypothesize that information is encoded into the direction of the latent code and the norm of the latent would have trivial impact [24]. We simply test our assumption by progressively multiplying a constant to unit-normalized CLIP embeddings and decoding this intermediate latent. From the above figure, we can observe our conjecture agrees with the results.
+Since CLIP latent is unit normalized during CLIP training, we hypothesize that information is encoded into the direction of the latent code and the norm of the latent would have trivial impact. We simply test our assumption by progressively multiplying a constant to unit-normalized CLIP embeddings and decoding this intermediate latent. From the above figure, we can observe our conjecture agrees with the results.
