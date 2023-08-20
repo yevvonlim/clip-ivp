@@ -1,6 +1,6 @@
-## Official Pytorch Implementation of CLIP-IVP
+## MICCAI2023 Workshop] Official Pytorch Implementation of CLIP-IVP
 
-This is an official implementation of CLIP-IVP: CLIP-based Intraoral View Prediction. 
+This is an official implementation of CLIP-IVP: CLIP-based Intraoral View Prediction presented in MICCAI2023 1st MedAGI workshop. 
 We exploited the source codes in stylegan2-ada repository for our implementation.
 
 In this study, we propose a novel method called CLIP-based Intraoral View Prediction (CLIP-IVP) for predicting novel views of intraoral structure using only a single front teeth image of a patient. This
